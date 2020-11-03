@@ -24,7 +24,7 @@ resources:
   type: gcs
   source:
     bucket: ((bucket))
-    regexp: \[p-healthwatch,(.*)\].*.pivotal
+    regexp: \[p-healthwatch,(.*)\].*\.pivotal
     json_key: ((json_key))
 
 - name: healthwatch-stemcell
@@ -33,6 +33,21 @@ resources:
     bucket: ((bucket))
     regexp: healthwatch-stemcell/\[stemcells-ubuntu-xenial,(.*)\]light-bosh-stemcell-.*-google-kvm-ubuntu-xenial-go_agent\\.tgz
     json_key: ((json_key))
+
+- name: tas-product
+  type: gcs
+  source:
+    bucket: ((bucket))
+    regexp: \[elastic-runtime,(.*)\].*\.pivotal
+    json_key: ((json_key))
+
+- name: tas-stemcell
+  type: gcs
+  source:
+    bucket: ((bucket))
+    regexp: tas-stemcell/\[stemcells-ubuntu-xenial,(.*)\]light-bosh-stemcell-.*-google-kvm-ubuntu-xenial-go_agent\\.tgz
+    json_key: ((json_key))
+
 
 - name: configuration
   type: git
@@ -113,17 +128,6 @@ jobs:
       files: configuration
     output_mapping:
       interpolated-files: interpolated-configs
-  - task: download-opsman-product
-    image: platform-automation-image
-    file: platform-automation-tasks/tasks/download-product.yml
-    params:
-      CONFIG_FILE: download-product/opsman.yml
-    input_mapping:
-      config: interpolated-configs
-  - in_parallel:
-      - put: opsman-product
-        params:
-          file: downloaded-product/*
   - task: download-healthwatch
     image: platform-automation-image
     file: platform-automation-tasks/tasks/download-product.yml
@@ -138,4 +142,45 @@ jobs:
     - put: healthwatch-stemcell
       params:
         file: downloaded-stemcell/*
+
+- name: fetch-tas
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: daily
+      trigger: true
+  - task: interpolate-env-creds
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/credhub-interpolate.yml
+    params:
+      CREDHUB_CLIENT: ((credhub-client))
+      CREDHUB_SECRET: ((credhub-secret))
+      CREDHUB_SERVER: ((credhub-server))
+      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
+      PREFIX: '/concourse/main'
+      INTERPOLATION_PATHS: download-product
+      SKIP_MISSING: false
+    input_mapping:
+      files: configuration
+    output_mapping:
+      interpolated-files: interpolated-configs
+  - task: download-tas
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    params:
+      CONFIG_FILE: download-product/tas.yml
+    input_mapping:
+      config: interpolated-configs
+  - in_parallel:
+    - put: tas-product
+      params:
+        file: downloaded-product/*
+    - put: tas-stemcell
+      params:
+        file: downloaded-stemcell/*
+
 
