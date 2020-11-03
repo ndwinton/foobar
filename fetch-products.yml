@@ -12,12 +12,28 @@ resources:
     bucket: ((bucket))
     regexp: platform-automation-image-(.*).tgz
     json_key: ((json_key))
+
 - name: opsman-product
   type: gcs
   source:
     bucket: ((bucket))
     regexp: \[ops-manager,(.*)\].*.yml
     json_key: ((json_key))
+
+- name: healthwatch-product
+  type: gcs
+  source:
+    bucket: ((bucket))
+    regexp: \[p-healthwatch,(.*)\].*.pivotal
+    json_key: ((json_key))
+
+- name: healthwatch-stemcell
+  type: gcs
+  source:
+    bucket: ((bucket))
+    regexp: healthwatch-stemcell/\[stemcells-ubuntu-xenial,(.*)\]light-bosh-stemcell-.*-google-kvm-ubuntu-xenial-go_agent\\.tgz
+    json_key: ((json_key))
+
 - name: configuration
   type: git
   source:
@@ -71,3 +87,55 @@ jobs:
       - put: opsman-product
         params:
           file: downloaded-product/*
+
+- name: fetch-healthwatch
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: daily
+      trigger: true
+  - task: interpolate-env-creds
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/credhub-interpolate.yml
+    params:
+      CREDHUB_CLIENT: ((credhub-client))
+      CREDHUB_SECRET: ((credhub-secret))
+      CREDHUB_SERVER: ((credhub-server))
+      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
+      PREFIX: '/concourse/main'
+      INTERPOLATION_PATHS: download-product
+      SKIP_MISSING: false
+    input_mapping:
+      files: configuration
+    output_mapping:
+      interpolated-files: interpolated-configs
+  - task: download-opsman-product
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    params:
+      CONFIG_FILE: download-product/opsman.yml
+    input_mapping:
+      config: interpolated-configs
+  - in_parallel:
+      - put: opsman-product
+        params:
+          file: downloaded-product/*
+  - task: download-healthwatch
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    params:
+      CONFIG_FILE: download-product/healthwatch.yml
+    input_mapping:
+      config: interpolated-configs
+  - in_parallel:
+    - put: healthwatch-product
+      params:
+        file: downloaded-product/*
+    - put: healthwatch-stemcell
+      params:
+        file: downloaded-stemcell/*
+
