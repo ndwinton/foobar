@@ -27,7 +27,7 @@ resources:
     versioned_file: state.yml
     json_key: ((json_key))
 
-- name: export
+- name: installation
   type: gcs
   source:
     bucket: ((state-bucket))
@@ -55,20 +55,21 @@ jobs:
       params: { unpack: true }
     - get: configuration
     - get: state
-  - task: interpolate-env-creds
-    image: platform-automation-image
-    file: platform-automation-tasks/tasks/credhub-interpolate.yml
-    params:
-      CREDHUB_CLIENT: ((credhub-client))
-      CREDHUB_SECRET: ((credhub-secret))
-      CREDHUB_SERVER: ((credhub-server))
-      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
-      PREFIX: '/concourse/sandbox'
-      SKIP_MISSING: false
-    input_mapping:
-      files: configuration
-    output_mapping:
-      interpolated-files: interpolated-configuration
+  - do: &interpolate-env-creds
+    - task: interpolate-env-creds
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/credhub-interpolate.yml
+      params:
+        CREDHUB_CLIENT: ((credhub-client))
+        CREDHUB_SECRET: ((credhub-secret))
+        CREDHUB_SERVER: ((credhub-server))
+        CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
+        PREFIX: '/concourse/sandbox'
+        SKIP_MISSING: false
+      input_mapping:
+        files: configuration
+      output_mapping:
+        interpolated-files: interpolated-configuration
   - task: download-opsman-product
     image: platform-automation-image
     file: platform-automation-tasks/tasks/download-product.yml
@@ -91,31 +92,34 @@ jobs:
       do:
       - put: state
         params: { file: generated-state/state.yml }
-  - task: configure-authentication
-    image: platform-automation-image
-    file: platform-automation-tasks/tasks/configure-authentication.yml
-    input_mapping:
-      env: interpolated-configuration
-      config: interpolated-configuration
-    params:
-      ENV_FILE: sandbox/env.yml
-      AUTH_CONFIG_FILE: sandbox/auth.yml
-  - task: configure-director
-    image: platform-automation-image
-    file: platform-automation-tasks/tasks/configure-director.yml
-    input_mapping:
-      env: interpolated-configuration
-      config: interpolated-configuration
-    params:
-      ENV_FILE: sandbox/env.yml
-      DIRECTOR_CONFIG_FILE: sandbox/director.yml
-  - task: apply-changes
-    image: platform-automation-image
-    file: platform-automation-tasks/tasks/apply-director-changes.yml
-    input_mapping:
-      env: interpolated-configuration
-    params:
-      ENV_FILE: sandbox/env.yml
+  - do: &configure-authentication
+    - task: configure-authentication
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/configure-authentication.yml
+      input_mapping:
+        env: interpolated-configuration
+        config: interpolated-configuration
+      params:
+        ENV_FILE: sandbox/env.yml
+        AUTH_CONFIG_FILE: sandbox/auth.yml
+  - do: &configure-director
+    - task: configure-director
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/configure-director.yml
+      input_mapping:
+        env: interpolated-configuration
+        config: interpolated-configuration
+      params:
+        ENV_FILE: sandbox/env.yml
+        DIRECTOR_CONFIG_FILE: sandbox/director.yml
+  - do: &apply-changes
+    - task: apply-changes
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/apply-director-changes.yml
+      input_mapping:
+        env: interpolated-configuration
+      params:
+        ENV_FILE: sandbox/env.yml
 
 - name: export-installation
   plan:
@@ -128,30 +132,57 @@ jobs:
     - get: state
     - get: daily
       trigger: true
-  - task: interpolate-env-creds
+  - do: *interpolate-env-creds
+  - do: &export-installation
+    - task: export-installation
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/export-installation.yml
+      input_mapping:
+        env: interpolated-configuration
+      params:
+        ENV_FILE: sandbox/env.yml
+        INSTALLATION_FILE: installation.zip
+      ensure:
+        do:
+        - put: installation
+          params: { file: installation/installation.zip }
+
+- name: upgrade-opsman
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: state
+    - get: installation
+      passed: [ export-installation ]
+  - do: *interpolate-env-creds
+  - task: download-opsman-product
     image: platform-automation-image
-    file: platform-automation-tasks/tasks/credhub-interpolate.yml
+    file: platform-automation-tasks/tasks/download-product.yml
     params:
-      CREDHUB_CLIENT: ((credhub-client))
-      CREDHUB_SECRET: ((credhub-secret))
-      CREDHUB_SERVER: ((credhub-server))
-      CREDHUB_CA_CERT: ((credhub-ca-cert.certificate))
-      PREFIX: '/concourse/sandbox'
-      SKIP_MISSING: false
+      CONFIG_FILE: download-product/opsman.yml
+      SOURCE: gcs
     input_mapping:
-      files: configuration
+      config: interpolated-configuration
     output_mapping:
-      interpolated-files: interpolated-configuration
-  - task: export-installation
+      downloaded-product: opsman-image
+  - task: upgrade-opsman
     image: platform-automation-image
-    file: platform-automation-tasks/tasks/export-installation.yml
+    file: platform-automation-tasks/tasks/upgrade-opsman.yml
     input_mapping:
       env: interpolated-configuration
+      config: interpolated-configuration
+      image: opsman-image
     params:
       ENV_FILE: sandbox/env.yml
-      INSTALLATION_FILE: installation.zip
+      OPSMAN_CONFIG_FILE: sandbox/opsman.yml
     ensure:
       do:
-      - put: export
-        params: { file: installation/installation.zip }
-
+      - put: state
+        params: { file: generated-state/state.yml }
+  - do: *configure-director
+  - do: *apply-changes
+  - do: *export-installation
