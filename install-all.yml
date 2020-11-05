@@ -112,8 +112,8 @@ jobs:
       params:
         ENV_FILE: sandbox/env.yml
         DIRECTOR_CONFIG_FILE: sandbox/director.yml
-  - do: &apply-changes
-    - task: apply-changes
+  - do: &apply-director-changes
+    - task: apply-director-changes
       image: platform-automation-image
       file: platform-automation-tasks/tasks/apply-director-changes.yml
       input_mapping:
@@ -252,4 +252,11 @@ jobs:
       params: { unpack: true }
     - get: configuration
   - do: *interpolate-env-creds
-  - do: *apply-changes
+  - do: &apply-changes
+    - task: apply-changes
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/apply-changes.yml
+      input_mapping:
+        env: interpolated-configuration
+      params:
+        ENV_FILE: sandbox/env.yml
