@@ -184,7 +184,7 @@ jobs:
       - put: state
         params: { file: generated-state/state.yml }
   - do: *configure-director
-  - do: *apply-changes
+  - do: *apply-director-changes
   - do: *export-installation
 
 - name: upload-and-stage-tas
