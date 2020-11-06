@@ -45,6 +45,14 @@ resources:
   source:
     interval: 24h
 
+- name: tas-product
+  type: gcs
+  source:
+    bucket: ((bucket))
+    json_key: ((json_key))
+    regexp: \[.*\]srt-(.*).pivotal
+    skip_download: true
+
 jobs:
 - name: install-opsman
   plan:
@@ -70,16 +78,17 @@ jobs:
         files: configuration
       output_mapping:
         interpolated-files: interpolated-configuration
-  - task: download-opsman-product
-    image: platform-automation-image
-    file: platform-automation-tasks/tasks/download-product.yml
-    params:
-      CONFIG_FILE: download-product/opsman.yml
-      SOURCE: gcs
-    input_mapping:
-      config: interpolated-configuration
-    output_mapping:
-      downloaded-product: opsman-image
+  - do: &download-opsman-product
+    - task: download-opsman-product
+      image: platform-automation-image
+      file: platform-automation-tasks/tasks/download-product.yml
+      params:
+        CONFIG_FILE: download-product/opsman.yml
+        SOURCE: gcs
+      input_mapping:
+        config: interpolated-configuration
+      output_mapping:
+        downloaded-product: opsman-image
   - task: create-vm
     image: platform-automation-image
     file: platform-automation-tasks/tasks/create-vm.yml
@@ -88,7 +97,7 @@ jobs:
       config: interpolated-configuration
     params:
       OPSMAN_CONFIG_FILE: sandbox/opsman.yml
-    ensure:
+    ensure: &put-state
       do:
       - put: state
         params: { file: generated-state/state.yml }
@@ -159,16 +168,7 @@ jobs:
     - get: installation
       passed: [ export-installation ]
   - do: *interpolate-env-creds
-  - task: download-opsman-product
-    image: platform-automation-image
-    file: platform-automation-tasks/tasks/download-product.yml
-    params:
-      CONFIG_FILE: download-product/opsman.yml
-      SOURCE: gcs
-    input_mapping:
-      config: interpolated-configuration
-    output_mapping:
-      downloaded-product: opsman-image
+  - do: *download-opsman-product
   - task: upgrade-opsman
     image: platform-automation-image
     file: platform-automation-tasks/tasks/upgrade-opsman.yml
@@ -179,10 +179,7 @@ jobs:
     params:
       ENV_FILE: sandbox/env.yml
       OPSMAN_CONFIG_FILE: sandbox/opsman.yml
-    ensure:
-      do:
-      - put: state
-        params: { file: generated-state/state.yml }
+    ensure: *put-state
   - do: *configure-director
   - do: *apply-director-changes
   - do: *export-installation
@@ -195,6 +192,8 @@ jobs:
     - get: platform-automation-image
       params: { unpack: true }
     - get: configuration
+    - get: tas-product
+      trigger: true
   - do: *interpolate-env-creds
   - task: download-tas-product
     image: platform-automation-image
@@ -232,6 +231,9 @@ jobs:
     - get: platform-automation-image
       params: { unpack: true }
     - get: configuration
+    - get: tas-product
+      passed: [ upload-and-stage-tas ]
+      trigger: true
   - do: *interpolate-env-creds
   - task: configure-tas
     image: platform-automation-image
@@ -251,6 +253,9 @@ jobs:
     - get: platform-automation-image
       params: { unpack: true }
     - get: configuration
+    - get: tas-product
+      passed: [ configure-tas ]
+      trigger: true
   - do: *interpolate-env-creds
   - do: &apply-changes
     - task: apply-changes
