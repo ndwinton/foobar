@@ -55,6 +55,8 @@ resources:
 
 jobs:
 - name: install-opsman
+  serial: true
+  serial_groups: [ install ]
   plan:
   - in_parallel:
     - get: platform-automation-tasks
@@ -157,6 +159,8 @@ jobs:
           params: { file: installation/installation.zip }
 
 - name: upgrade-opsman
+  serial: true
+  serial_groups: [ install ]
   plan:
   - in_parallel:
     - get: platform-automation-tasks
@@ -167,6 +171,7 @@ jobs:
     - get: state
     - get: installation
       passed: [ export-installation ]
+      trigger: true
   - do: *interpolate-env-creds
   - do: *download-opsman-product
   - task: upgrade-opsman
@@ -191,6 +196,7 @@ jobs:
       params: { unpack: true }
     - get: platform-automation-image
       params: { unpack: true }
+      passed: [ upgrade-opsman ]
     - get: configuration
     - get: tas-product
       trigger: true
