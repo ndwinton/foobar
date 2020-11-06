@@ -45,13 +45,22 @@ resources:
   source:
     interval: 24h
 
-- name: tas-product
+- name: tas-product-check
   type: gcs
   source:
     bucket: ((bucket))
     json_key: ((json_key))
     regexp: \[.*\]srt-(.*).pivotal
     skip_download: true
+
+- name: healthwatch-product-check
+  type: gcs
+  source:
+    bucket: ((bucket))
+    regexp: \[p-healthwatch,(.*)\].*\.pivotal
+    json_key: ((json_key))
+    skip_download: true
+
 
 jobs:
 - name: install-opsman
@@ -198,7 +207,7 @@ jobs:
       params: { unpack: true }
       passed: [ upgrade-opsman ]
     - get: configuration
-    - get: tas-product
+    - get: tas-product-check
       trigger: true
   - do: *interpolate-env-creds
   - task: download-tas-product
@@ -237,7 +246,7 @@ jobs:
     - get: platform-automation-image
       params: { unpack: true }
     - get: configuration
-    - get: tas-product
+    - get: tas-product-check
       passed: [ upload-and-stage-tas ]
       trigger: true
   - do: *interpolate-env-creds
@@ -259,8 +268,11 @@ jobs:
     - get: platform-automation-image
       params: { unpack: true }
     - get: configuration
-    - get: tas-product
+    - get: tas-product-check
       passed: [ configure-tas ]
+      trigger: true
+    - get: healthwatch-product-check
+      passed: [ configure-healthwatch ]
       trigger: true
   - do: *interpolate-env-creds
   - do: &apply-changes
@@ -271,3 +283,66 @@ jobs:
         env: interpolated-configuration
       params:
         ENV_FILE: sandbox/env.yml
+
+- name: upload-and-stage-healthwatch
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+      passed: [ upgrade-opsman ]
+    - get: configuration
+    - get: healthwatch-product-check
+      trigger: true
+  - do: *interpolate-env-creds
+  - task: download-healthwatch-product
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/download-product.yml
+    params:
+      CONFIG_FILE: download-product/healthwatch.yml
+      SOURCE: gcs
+    input_mapping:
+      config: interpolated-configuration
+    output_mapping:
+      downloaded-product: healthwatch-product
+      downloaded-stemcell: healthwatch-stemcell
+  - task: upload-and-stage-healthwatch
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upload-and-stage-product.yml
+    input_mapping:
+      product: healthwatch-product
+      env: interpolated-configuration
+    params:
+      ENV_FILE: sandbox/env.yml
+  - task: upload-healthwatch-stemcell
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/upload-stemcell.yml
+    input_mapping:
+      env: interpolated-configuration
+      stemcell: healthwatch-stemcell
+    params:
+      ENV_FILE: sandbox/env.yml 
+
+- name: configure-healthwatch
+  plan:
+  - in_parallel:
+    - get: platform-automation-tasks
+      params: { unpack: true }
+    - get: platform-automation-image
+      params: { unpack: true }
+    - get: configuration
+    - get: healthwatch-product-check
+      passed: [ upload-and-stage-healthwatch ]
+      trigger: true
+  - do: *interpolate-env-creds
+  - task: configure-healthwatch
+    image: platform-automation-image
+    file: platform-automation-tasks/tasks/configure-product.yml
+    input_mapping:
+      config: interpolated-configuration
+      env: interpolated-configuration
+    params:
+      CONFIG_FILE: sandbox/healthwatch.yml
+      ENV_FILE: sandbox/env.yml
+
